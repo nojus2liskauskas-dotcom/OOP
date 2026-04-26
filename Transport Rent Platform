@@ -1,0 +1,213 @@
+import csv
+import os
+import unittest
+from abc import ABC, abstractmethod
+
+
+class Vehicle(ABC):
+    def __init__(self, vehicle_id, brand, model, price_per_day):
+        self.__vehicle_id = vehicle_id
+        self.__brand = brand
+        self.__model = model
+        self.__price_per_day = price_per_day
+        self.__is_available = True
+
+    @property
+    def vehicle_id(self):
+        return self.__vehicle_id
+
+    @property
+    def brand(self):
+        return self.__brand
+
+    @property
+    def model(self):
+        return self.__model
+
+    @property
+    def price_per_day(self):
+        return self.__price_per_day
+
+    @property
+    def is_available(self):
+        return self.__is_available
+
+    def rent_out(self):
+        self.__is_available = False
+
+    def make_available(self):
+        self.__is_available = True
+
+    def calculate_rent_price(self, days):
+        return self.__price_per_day * days
+
+    @abstractmethod
+    def get_info(self):
+        pass
+
+    @abstractmethod
+    def to_csv_row(self):
+        pass
+
+
+class Car(Vehicle):
+    def __init__(self, vehicle_id, brand, model, price_per_day, door_count):
+        super().__init__(vehicle_id, brand, model, price_per_day)
+        self.door_count = door_count
+
+    def get_info(self):
+        status = "Available" if self.is_available else "Rented"
+        return f"[{self.vehicle_id}] Car: {self.brand} {self.model} ({self.door_count} doors) - ${self.price_per_day}/day [{status}]"
+
+    def to_csv_row(self):
+        return [self.vehicle_id, 'Car', self.brand, self.model, self.price_per_day, self.door_count, self.is_available]
+
+
+class Scooter(Vehicle):
+    def __init__(self, vehicle_id, brand, model, price_per_day, is_electric):
+        super().__init__(vehicle_id, brand, model, price_per_day)
+        self.is_electric = is_electric
+
+    def get_info(self):
+        status = "Available" if self.is_available else "Rented"
+        v_type = "Electric" if self.is_electric else "Manual"
+        return f"[{self.vehicle_id}] Scooter: {self.brand} {self.model} ({v_type}) - ${self.price_per_day}/day [{status}]"
+
+    def to_csv_row(self):
+        return [self.vehicle_id, 'Scooter', self.brand, self.model, self.price_per_day, self.is_electric, self.is_available]
+
+
+class VehicleFactory:
+    @staticmethod
+    def create_vehicle(vehicle_type, vehicle_id, brand, model, price, extra_param):
+        if vehicle_type.lower() == 'car':
+            return Car(vehicle_id, brand, model, float(price), int(extra_param))
+        elif vehicle_type.lower() == 'scooter':
+            is_elec = str(extra_param).lower() in ['true', '1', 'yes']
+            return Scooter(vehicle_id, brand, model, float(price), is_elec)
+        else:
+            raise ValueError(f"Unknown vehicle type: {vehicle_type}")
+
+
+class Customer:
+    def __init__(self, name):
+        self.name = name
+        self.rented_vehicles = {}
+
+
+class RentalPlatform:
+    def __init__(self, name):
+        self.name = name
+        self.inventory = []
+        self.customers = []
+
+    def add_vehicle(self, vehicle):
+        self.inventory.append(vehicle)
+
+    def register_customer(self, customer):
+        self.customers.append(customer)
+
+    def show_inventory(self):
+        print(f"\n--- {self.name} Inventory ---")
+        for v in self.inventory:
+            print(v.get_info())
+
+    def rent_vehicle(self, customer, vehicle_id, days):
+        for v in self.inventory:
+            if v.vehicle_id == vehicle_id:
+                if v.is_available:
+                    v.rent_out()
+                    customer.rented_vehicles[v] = days
+                    print(f"SUCCESS: {customer.name} rented {v.brand} {v.model}.")
+                    return True
+                else:
+                    print(f"ERROR: Vehicle {vehicle_id} is already rented.")
+                    return False
+        print(f"ERROR: Vehicle ID '{vehicle_id}' not found.")
+        return False
+
+    def return_vehicle(self, customer, vehicle_id):
+        for v, days in list(customer.rented_vehicles.items()):
+            if v.vehicle_id == vehicle_id:
+                v.make_available()
+                total_cost = v.calculate_rent_price(days)
+                del customer.rented_vehicles[v]
+                print(f"SUCCESS: {customer.name} returned {v.brand}. Cost: ${total_cost}")
+                return total_cost
+        print(f"ERROR: Customer does not have vehicle '{vehicle_id}'.")
+        return -1
+
+    def save_inventory_to_csv(self, filename="inventory.csv"):
+        with open(filename, mode='w', newline='', encoding='utf-8') as file:
+            writer = csv.writer(file)
+            writer.writerow(["ID", "Type", "Brand", "Model", "Price", "Extra", "IsAvailable"])
+            for v in self.inventory:
+                writer.writerow(v.to_csv_row())
+        print(f"Inventory saved to {filename}")
+
+    def load_inventory_from_csv(self, filename="inventory.csv"):
+        if not os.path.exists(filename):
+            print(f"File {filename} not found. Starting with empty inventory.")
+            return
+
+        self.inventory = []
+        with open(filename, mode='r', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                vehicle = VehicleFactory.create_vehicle(
+                    row["Type"], row["ID"], row["Brand"], row["Model"], row["Price"], row["Extra"]
+                )
+                if row["IsAvailable"] == "False":
+                    vehicle.rent_out()
+                self.add_vehicle(vehicle)
+        print(f"Inventory loaded from {filename}")
+
+
+class TestRentalPlatform(unittest.TestCase):
+    def setUp(self):
+        self.platform = RentalPlatform("Test City")
+        self.car = VehicleFactory.create_vehicle('car', 'T01', 'TestBrand', 'TestModel', 50, 4)
+        self.platform.add_vehicle(self.car)
+        self.customer = Customer("Test User")
+        self.platform.register_customer(self.customer)
+
+    def test_rent_vehicle_success(self):
+        result = self.platform.rent_vehicle(self.customer, 'T01', 2)
+        self.assertTrue(result)
+        self.assertFalse(self.car.is_available)
+
+    def test_rent_vehicle_failure(self):
+        self.platform.rent_vehicle(self.customer, 'T01', 2)
+        result = self.platform.rent_vehicle(self.customer, 'T01', 5)
+        self.assertFalse(result)
+
+    def test_return_vehicle(self):
+        self.platform.rent_vehicle(self.customer, 'T01', 3)
+        cost = self.platform.return_vehicle(self.customer, 'T01')
+        self.assertEqual(cost, 150)
+        self.assertTrue(self.car.is_available)
+
+
+if __name__ == '__main__':
+    print("=== STARTING UNIT TESTS ===")
+    unittest.main(argv=['first-arg-is-ignored'], exit=False)
+
+    print("\n=== RUNNING MAIN PROGRAM ===")
+    platform = RentalPlatform("City Wheels")
+
+    v1 = VehicleFactory.create_vehicle("car", "C01", "Toyota", "Prius", 30, 4)
+    v2 = VehicleFactory.create_vehicle("scooter", "S01", "Xiaomi", "Pro", 10, True)
+    platform.add_vehicle(v1)
+    platform.add_vehicle(v2)
+
+    c1 = Customer("John Doe")
+    platform.register_customer(c1)
+
+    platform.show_inventory()
+    platform.rent_vehicle(c1, "C01", 4)
+
+    platform.save_inventory_to_csv("my_rental_data.csv")
+
+    platform2 = RentalPlatform("City Wheels (Reloaded)")
+    platform2.load_inventory_from_csv("my_rental_data.csv")
+    platform2.show_inventory()
